@@ -106,27 +106,32 @@ pub struct EmscriptenPackage {
     pub sdk_version: String,
 }
 
+pub fn setup_emscripten(emscripten: &EmscriptenPackage, destination: &Path) -> Result<(), String> {
+    get_emscripten_revision(emscripten, destination)?;
+    install_emscripten(emscripten, destination)?;
+    Ok(())
+}
+
 pub fn install_emscripten(
     emscripten: &EmscriptenPackage,
     destination: &Path,
 ) -> Result<(), String> {
     use std::process::Command;
-    let install_subcommand = "install";
-    let activate_subcommand = "activate";
-
     #[cfg(target_os = "windows")]
     let command = "emsdk.bat";
     #[cfg(target_os = "linux")]
     let command = "./emsdk";
 
-    let output = Command::new(command)
-        .arg(install_subcommand)
-        .arg(emscripten.sdk_version.clone())
-        .current_dir(destination)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let command = destination.join(command);
 
-    let check_status = |output: std::process::Output, err: &str| {
+    let mut install = Command::new(command.clone());
+    install
+        .arg("install")
+        .arg(emscripten.sdk_version.clone())
+        .current_dir(destination);
+
+    let run = |command: &mut Command, err: &str| {
+        let output = command.output().map_err(|e| e.to_string())?;
         println!("{}", String::from_utf8(output.stdout).unwrap());
         if output.status.success() {
             Ok(())
@@ -136,24 +141,45 @@ pub fn install_emscripten(
         }
     };
 
-    check_status(output, "Failed to install EMSDK : ")?;
+    println!("Executing Emscripten SDK install command");
+    run(&mut install, "Failed to install EMSDK : ")?;
 
-    let output = Command::new(command)
-        .arg(activate_subcommand)
+    let mut activate_command = Command::new(command);
+    activate_command
+        .arg("activate")
         .arg(emscripten.sdk_version.clone())
-        .current_dir(destination)
-        .output()
-        .map_err(|e| e.to_string())?;
-    check_status(output, "Failed to activate EMSDK : ")?;
+        .current_dir(destination);
+
+    println!("Executing Emscripten SDK activate command");
+    run(
+        &mut activate_command,
+        "Failed to activate Emscripten SDK : ",
+    )?;
+
+    if let Some(path) = std::env::var_os("PATH") {
+        let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
+        paths.push(PathBuf::from(destination));
+        let new_path = std::env::join_paths(paths).map_err(|_| "Could not join paths")?;
+        std::env::set_var("PATH", &new_path);
+    }
+    println!(
+        "PATH after EmscriptenInstallation {:?}",
+        std::env::var_os("PATH").unwrap(),
+    );
+
     Ok(())
 }
 
-pub fn download_emscripten_repo(
+pub fn get_emscripten_revision(
     emscripten: &EmscriptenPackage,
     destination: &Path,
 ) -> Result<(), String> {
-    let repo = git2::Repository::clone(emscripten.git.as_str(), destination)
-        .map_err(|e| "Could not clone Emscripten repo:".to_owned() + e.message())?;
+    println!("Getting the Emscripten SDK repo");
+
+    let repo = git2::Repository::open(destination)
+        .or_else(|_| git2::Repository::clone(emscripten.git.as_str(), destination))
+        .map_err(|e| "Could not get the Emscripten SDK repo: ".to_owned() + e.message())?;
+
     let (object, reference) = repo
         .revparse_ext(&emscripten.rev)
         .map_err(|e| "Could not find the Emscripten SDK revision: ".to_owned() + e.message())?;
@@ -178,43 +204,22 @@ pub fn initialize_emscripten(
     use_system_emscripten: bool,
     targeting_webasm: bool,
 ) -> Option<Emscripten> {
-    if use_system_emscripten {
-        check_emscripten();
-        return None;
-    }
-
-    let emscripten_package = match emscripten_package() {
-        Some(pkg) => pkg,
-        None => {
-            check_emscripten();
-            return None;
-        }
+    let emscripten = EmscriptenPackage {
+        git: "https://github.com/emscripten-core/emsdk.git".to_owned(),
+        rev: "main".to_owned(),
+        sdk_version: "2.0.9".to_owned(),
     };
 
-    let binaryen_package = if targeting_webasm {
-        match binaryen_package() {
-            Some(pkg) => Some(pkg),
-            None => {
-                check_emscripten();
-                return None;
-            }
-        }
-    } else {
-        None
-    };
+    let emscripten_root = std::path::Path::new("F:\\Repos\\emsdk_my_cargo_web");
 
-    let emscripten_root = download_package(&emscripten_package);
+    setup_emscripten(&emscripten, &emscripten_root).unwrap();
+    check_emscripten();
+
     let emscripten_path = emscripten_root.join("emscripten");
     let emscripten_llvm_path = emscripten_root.join("emscripten-fastcomp");
-    let binaryen_path = if let Some(binaryen_package) = binaryen_package {
-        let binaryen_root = download_package(&binaryen_package);
-        Some(binaryen_root.join("binaryen"))
-    } else {
-        None
-    };
 
     Some(Emscripten {
-        binaryen_path,
+        binaryen_path: None,
         emscripten_path,
         emscripten_llvm_path,
     })

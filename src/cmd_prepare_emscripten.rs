@@ -1,6 +1,4 @@
-use emscripten::download_emscripten_repo;
-use emscripten::initialize_emscripten;
-use emscripten::install_emscripten;
+use emscripten::setup_emscripten;
 use emscripten::EmscriptenPackage;
 use error::Error;
 
@@ -10,13 +8,7 @@ pub fn command_prepare_emscripten<'a>() -> Result<(), Error> {
         rev: "main".to_owned(),
         sdk_version: "2.0.9".to_owned(),
     };
-
-    download_emscripten_repo(
-        &emscripten,
-        &std::path::Path::new("F:\\Repos\\emsdk_my_cargo_web"),
-    )?;
-
-    install_emscripten(
+    setup_emscripten(
         &emscripten,
         &std::path::Path::new("F:\\Repos\\emsdk_my_cargo_web"),
     )?;
